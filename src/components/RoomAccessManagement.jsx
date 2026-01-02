@@ -70,23 +70,31 @@ export default function RoomAccessManagement({ addToast }) {
   const selectRoom = async (room) => {
     setSelectedRoom(room);
     try {
-      const access = await apiClient.getRoomAccess(room.id);
+      const access = await apiClient.getRoomAccess(room._id);
       setRoomUsers(access.users || []);
       
       // Load room logs
-      const logs = await apiClient.getRoomLogs(room.id);
+      const logs = await apiClient.getRoomLogs(room._id);
       setRoomLogs(logs || []);
     } catch (err) {
+      console.error('Error loading room details:', err);
       addToast(`Error loading room details: ${err.message}`, 'error');
+      // Set empty data on error
+      setRoomUsers([]);
+      setRoomLogs([]);
     }
   };
 
-  const handleGrantAccess = async (userId) => {
-    if (!selectedRoom) return;
+  const handleGrantAccess = async (user) => {
+    if (!selectedRoom || !user) return;
     
     try {
-      await apiClient.grantAccess(selectedRoom.id, userId);
-      addToast(`✓ Access granted to ${getUsername(userId)}`, 'success');
+      // Get the correct identifier based on user type
+      const identifier = user.type === 'face' ? user._id : (user.uid || user._id);
+      const userType = user.type || 'rfid';
+      
+      await apiClient.grantAccess(selectedRoom._id, identifier, userType);
+      addToast(`✓ Access granted to ${user.name}`, 'success');
       selectRoom(selectedRoom); // Refresh
       loadData(); // Refresh rooms list
     } catch (err) {
@@ -94,12 +102,15 @@ export default function RoomAccessManagement({ addToast }) {
     }
   };
 
-  const handleRevokeAccess = async (userId) => {
-    if (!selectedRoom) return;
+  const handleRevokeAccess = async (user) => {
+    if (!selectedRoom || !user) return;
     
     try {
-      await apiClient.revokeAccess(selectedRoom.id, userId);
-      addToast(`✓ Access revoked from ${getUsername(userId)}`, 'success');
+      // Get the correct identifier based on user type
+      const identifier = user.type === 'face' ? user._id : (user.uid || user._id);
+      
+      await apiClient.revokeAccess(selectedRoom._id, identifier);
+      addToast(`✓ Access revoked from ${user.name}`, 'success');
       selectRoom(selectedRoom); // Refresh
       loadData(); // Refresh rooms list
     } catch (err) {
@@ -149,15 +160,26 @@ export default function RoomAccessManagement({ addToast }) {
     }
   };
 
-  const getUsername = (userId) => {
-    const user = users.find(u => u.id === userId);
-    return user ? user.name : `User ${userId}`;
+  const getUsername = (user) => {
+    if (typeof user === 'string') {
+      // If it's a string (old ID), find user in users array
+      const foundUser = users.find(u => u._id === user || u.id === user);
+      return foundUser ? foundUser.name : `User ${user}`;
+    }
+    return user.name || 'Unknown User';
   };
 
   const getAvailableUsers = () => {
     if (!selectedRoom) return [];
-    const roomUserIds = roomUsers.map(u => u.id);
-    return allUsers.filter(u => !roomUserIds.includes(u.id));
+    // Get room user identifiers
+    const roomUserIdentifiers = roomUsers.map(u => {
+      return u.type === 'face' ? u._id : (u.uid || u._id);
+    });
+    // Filter out users that already have access
+    return allUsers.filter(u => {
+      const identifier = u.type === 'face' ? u._id : (u.uid || u._id);
+      return !roomUserIdentifiers.includes(identifier);
+    });
   };
 
   if (loading) {
@@ -280,20 +302,23 @@ export default function RoomAccessManagement({ addToast }) {
                     <h3>Users With Access</h3>
                     {roomUsers.length > 0 ? (
                       <div className="users-list">
-                        {roomUsers.map(user => (
-                          <div key={user.id} className="user-item has-access">
-                            <div className="user-info">
-                              <div className="user-name">{user.name}</div>
-                              <div className="user-email">{user.email}</div>
+                        {roomUsers.map(user => {
+                          const userId = user.type === 'face' ? user._id : (user.uid || user._id);
+                          return (
+                            <div key={userId} className="user-item has-access">
+                              <div className="user-info">
+                                <div className="user-name">{user.name}</div>
+                                <div className="user-email">{user.type === 'face' ? user._id : user.uid}</div>
+                              </div>
+                              <button
+                                className="btn-danger"
+                                onClick={() => handleRevokeAccess(user)}
+                              >
+                                Revoke
+                              </button>
                             </div>
-                            <button
-                              className="btn-danger"
-                              onClick={() => handleRevokeAccess(user.id)}
-                            >
-                              Revoke
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="empty-state">No users have access yet</p>
@@ -304,20 +329,23 @@ export default function RoomAccessManagement({ addToast }) {
                     <div className="access-section">
                       <h3>Grant Access</h3>
                       <div className="users-list">
-                        {getAvailableUsers().map(user => (
-                          <div key={user.id} className="user-item no-access">
-                            <div className="user-info">
-                              <div className="user-name">{user.name}</div>
-                              <div className="user-email">{user.email}</div>
+                        {getAvailableUsers().map(user => {
+                          const userId = user.type === 'face' ? user._id : (user.uid || user._id);
+                          return (
+                            <div key={userId} className="user-item no-access">
+                              <div className="user-info">
+                                <div className="user-name">{user.name}</div>
+                                <div className="user-email">{user.type === 'face' ? user._id : user.uid}</div>
+                              </div>
+                              <button
+                                className="btn-success"
+                                onClick={() => handleGrantAccess(user)}
+                              >
+                                Grant
+                              </button>
                             </div>
-                            <button
-                              className="btn-success"
-                              onClick={() => handleGrantAccess(user.id)}
-                            >
-                              Grant
-                            </button>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -389,18 +417,21 @@ export default function RoomAccessManagement({ addToast }) {
           </div>
 
           <div className="ram-list">
-            {users.map(user => (
-              <div key={user.id} className="ram-user-item">
-                <div className="user-avatar">
-                  {user.name.charAt(0).toUpperCase()}
+            {users.map(user => {
+              const userId = user.type === 'face' ? user._id : (user.uid || user._id);
+              return (
+                <div key={userId} className="ram-user-item">
+                  <div className="user-avatar">
+                    {user.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="user-details">
+                    <div className="user-name">{user.name}</div>
+                    <div className="user-email">{user.type === 'face' ? user._id : user.uid}</div>
+                    <div className="user-role">{user.type}</div>
+                  </div>
                 </div>
-                <div className="user-details">
-                  <div className="user-name">{user.name}</div>
-                  <div className="user-email">{user.email}</div>
-                  <div className="user-role">{user.role}</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
